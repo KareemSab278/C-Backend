@@ -2,7 +2,9 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <winsock2.h> // has to be like this on windows: https://learn.microsoft.com/en-us/windows/win32/api/winsock2/
+#include <winsock2.h>    // has to be like this on windows: https://learn.microsoft.com/en-us/windows/win32/api/winsock2/
+#include <mysql.h> // oracle decided to replace mysql.h with jdbc for c/c++ yet idk how to use it... mysql.h doesnt work rn...
+// WTF ORACLE - GOOFY AHH COMPANY FIX YOUR DOCS!!!
 #include <unistd.h>
 #include <string.h>
 
@@ -23,6 +25,44 @@ success_response response = {
     "application/json",
     NULL};
 
+MYSQL *mysql_real_connect(MYSQL *mysql,
+                          const char *host,
+                          const char *user,
+                          const char *passwd,
+                          const char *db,
+                          unsigned int port,
+                          const char *unix_socket,
+                          unsigned long client_flag);
+
+void authenticateSQLDBConnection(const char *host, const char *user, const char *passwd, const char *database)
+{
+    MYSQL *conn = mysql_init(NULL);
+    conn = mysql_real_connect(conn, host, user, passwd, database, 0, NULL, 0);
+    if (conn == NULL)
+    {
+        fprintf(stderr, "MySQL connection failed\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        printf("MySQL connection successful\n");
+    }
+}
+
+void runSQLQuery(const char *query)
+{
+    // the query should be here and do something idk yet tho lol
+    printf("Executing SQL Query: %s\n", query);
+}
+
+void populateResponseBody(success_response *response, const char *status_code, const char *status_text, const char *bodyContent)
+{
+    response->status_code = atoi(status_code); // atoi is ascii to int. Ascii TO Int -> ATOI (lol)
+    response->status_text = status_text;
+    response->content_type = "application/json";
+    response->body = bodyContent;
+}
+
 // delete existing html file if exists for fresh creation
 void deleteHTMLFile(const char *filePath)
 {
@@ -32,11 +72,8 @@ void deleteHTMLFile(const char *filePath)
         fclose(htmlFile);
         remove(filePath);
         perror("Deleting existing HTML file");
-
         fclose(htmlFile);
-        htmlFile = fopen(filePath, "r");
-
-        if (htmlFile == NULL)
+        if (fopen(filePath, "r") == NULL)
         {
             printf("Existing HTML file deleted successfully.\n");
         }
@@ -44,7 +81,7 @@ void deleteHTMLFile(const char *filePath)
     }
 }
 
-void createHTMLFile(const char *filePath, const struct success_response response)
+void populateNewHTMLFile(const char *filePath, const struct success_response response)
 {
     deleteHTMLFile(filePath);
 
@@ -56,7 +93,6 @@ void createHTMLFile(const char *filePath, const struct success_response response
         return;
     }
 
-    // Write the response body to the HTML file
     fprintf(htmlFile, "%s", response.body);
     fclose(htmlFile);
     printf("HTML file created successfully.\n");
@@ -65,12 +101,10 @@ void createHTMLFile(const char *filePath, const struct success_response response
 // find html file, read it, send it over.
 void showHTML(int clientSocket, const char *filePath, const success_response *response)
 {
-
-    createHTMLFile(filePath, *response);
+    populateNewHTMLFile(filePath, *response);
 
     FILE *htmlFile = fopen(filePath, "r");
 
-    // Calculate the file size
     fseek(htmlFile, 0, SEEK_END);
     long fileSize = ftell(htmlFile);
     rewind(htmlFile);
@@ -83,7 +117,6 @@ void showHTML(int clientSocket, const char *filePath, const success_response *re
              "\r\n",
              fileSize);
 
-    // Send the HTTP header
     if (send(clientSocket, httpHeader, strlen(httpHeader), 0) == -1)
     {
         perror("Failed to send HTTP header");
