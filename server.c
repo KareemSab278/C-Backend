@@ -2,14 +2,16 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <winsock2.h>    // has to be like this on windows: https://learn.microsoft.com/en-us/windows/win32/api/winsock2/
-#include <mysql.h> // oracle decided to replace mysql.h with jdbc for c/c++ yet idk how to use it... mysql.h doesnt work rn...
+#include <winsock2.h> // has to be like this on windows: https://learn.microsoft.com/en-us/windows/win32/api/winsock2/
+// #include <mysql.h> // oracle decided to replace mysql.h with jdbc for c/c++ yet idk how to use it... mysql.h doesnt work rn...
 // WTF ORACLE - GOOFY AHH COMPANY FIX YOUR DOCS!!!
+#include "sqlite3.h"
 #include <unistd.h>
 #include <string.h>
+#include "CRUD/initializeDatabase.c"
 
 #define PORT 6969        // def port
-#define BUFFER_SIZE 1024 // how many bytes to handle at once
+#define BUFFER_SIZE 1024 // how many bytes to handle at once (1kb)
 
 typedef struct success_response
 {
@@ -23,123 +25,36 @@ success_response response = {
     200,
     "OK",
     "application/json",
-    NULL};
+    "{\"message\":\"Empty Success Response\"}"};
 
-MYSQL *mysql_real_connect(MYSQL *mysql,
-                          const char *host,
-                          const char *user,
-                          const char *passwd,
-                          const char *db,
-                          unsigned int port,
-                          const char *unix_socket,
-                          unsigned long client_flag);
+// too lazy to dynamically allocate memory for this so just make it smaller for now lol
+char table_creation_sql[BUFFER_SIZE / 4] = "CREATE TABLE IF NOT EXISTS SQL_IN_C ( id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, job TEXT NOT NULL );";
 
-void authenticateSQLDBConnection(const char *host, const char *user, const char *passwd, const char *database)
+void runSQLQuery(const char *database)
 {
-    MYSQL *conn = mysql_init(NULL);
-    conn = mysql_real_connect(conn, host, user, passwd, database, 0, NULL, 0);
-    if (conn == NULL)
+    if (initializeDatabase(database, table_creation_sql) == 0)
     {
-        fprintf(stderr, "MySQL connection failed\n");
-        exit(EXIT_FAILURE);
+        printf("Database already exists: %s\n", database);
+        return;
+    }
+    else if (initializeDatabase(database, table_creation_sql) == -1)
+    {
+        printf("Error initializing database: %s\n", database);
+        return;
     }
     else
     {
-        printf("MySQL connection successful\n");
+        printf("Database created: %s\n", database);
     }
-}
-
-void runSQLQuery(const char *query)
-{
-    // the query should be here and do something idk yet tho lol
-    printf("Executing SQL Query: %s\n", query);
+   
 }
 
 void populateResponseBody(success_response *response, const char *status_code, const char *status_text, const char *bodyContent)
 {
-    response->status_code = atoi(status_code); // atoi is ascii to int. Ascii TO Int -> ATOI (lol)
+    response->status_code = atoi(status_code); // (A)scii (TO) (I)nt -> ATOI
     response->status_text = status_text;
     response->content_type = "application/json";
     response->body = bodyContent;
-}
-
-// delete existing html file if exists for fresh creation
-void deleteHTMLFile(const char *filePath)
-{
-    FILE *htmlFile = fopen(filePath, "r");
-    if (htmlFile)
-    {
-        fclose(htmlFile);
-        remove(filePath);
-        perror("Deleting existing HTML file");
-        fclose(htmlFile);
-        if (fopen(filePath, "r") == NULL)
-        {
-            printf("Existing HTML file deleted successfully.\n");
-        }
-        return;
-    }
-}
-
-void populateNewHTMLFile(const char *filePath, const struct success_response response)
-{
-    deleteHTMLFile(filePath);
-
-    printf("Creating HTML file: %s\n", filePath);
-    FILE *htmlFile = fopen(filePath, "w");
-    if (!htmlFile)
-    {
-        perror("Could not create HTML file");
-        return;
-    }
-
-    fprintf(htmlFile, "%s", response.body);
-    fclose(htmlFile);
-    printf("HTML file created successfully.\n");
-}
-
-// find html file, read it, send it over.
-void showHTML(int clientSocket, const char *filePath, const success_response *response)
-{
-    populateNewHTMLFile(filePath, *response);
-
-    FILE *htmlFile = fopen(filePath, "r");
-
-    fseek(htmlFile, 0, SEEK_END);
-    long fileSize = ftell(htmlFile);
-    rewind(htmlFile);
-
-    char httpHeader[BUFFER_SIZE];
-    snprintf(httpHeader, sizeof(httpHeader),
-             "HTTP/1.1 200 OK\r\n"
-             "Content-Type: application/json\r\n"
-             "Content-Length: %ld\r\n"
-             "\r\n",
-             fileSize);
-
-    if (send(clientSocket, httpHeader, strlen(httpHeader), 0) == -1)
-    {
-        perror("Failed to send HTTP header");
-    }
-    else
-    {
-        printf("HTTP header sent successfully.\n");
-    }
-
-    // Send the file content
-    char buffer[BUFFER_SIZE];
-    size_t bytes_read;
-    while ((bytes_read = fread(buffer, 1, BUFFER_SIZE, htmlFile)) > 0)
-    {
-        if (send(clientSocket, buffer, bytes_read, 0) == -1)
-        {
-            perror("Failed to send file content");
-            break;
-        }
-    }
-    printf("HTML file sent successfully.\n");
-
-    fclose(htmlFile);
 }
 
 int server()
@@ -149,6 +64,9 @@ int server()
     struct sockaddr_in server_addr, client_addr;
     int client_len = sizeof(client_addr);
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+    runSQLQuery("SQL_IN_C.db"); // create or initialize database
+
     if (serverSocket == -1)
     {
         perror("Failed to start server");
