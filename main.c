@@ -1,9 +1,7 @@
-#include "server.h"
 #include <stdio.h>
 #include <winsock2.h>
 #include "sqlite3.h"
-
-// gcc server.c main.c sqlite3.c -o backend -lws2_32
+#include "server.h"
 
 int main()
 {

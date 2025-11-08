@@ -62,6 +62,7 @@
         "cinttypes": "c",
         "typeinfo": "c",
         "variant": "c",
-        "sqlite3.h": "c"
+        "sqlite3.h": "c",
+        "db.h": "c"
     }
 }

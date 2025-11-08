@@ -2,16 +2,15 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <winsock2.h> // has to be like this on windows: https://learn.microsoft.com/en-us/windows/win32/api/winsock2/
-// #include <mysql.h> // oracle decided to replace mysql.h with jdbc for c/c++ yet idk how to use it... mysql.h doesnt work rn...
-// WTF ORACLE - GOOFY AHH COMPANY FIX YOUR DOCS!!!
+#include <winsock2.h>
 #include "sqlite3.h"
 #include <unistd.h>
 #include <string.h>
-#include "CRUD/initializeDatabase.c"
+#include "DBFunctions/DB.h"
+#include "helpers/helpers.h"
 
 #define PORT 6969        // def port
-#define BUFFER_SIZE 1024 // how many bytes to handle at once (1kb)
+#define BUFFER_SIZE 4096 // how many bytes to handle at once (1kb)
 
 typedef struct success_response
 {
@@ -27,26 +26,21 @@ success_response response = {
     "application/json",
     "{\"message\":\"Empty Success Response\"}"};
 
-// too lazy to dynamically allocate memory for this so just make it smaller for now lol
 char table_creation_sql[BUFFER_SIZE / 4] = "CREATE TABLE IF NOT EXISTS SQL_IN_C ( id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, job TEXT NOT NULL );";
 
 void runSQLQuery(const char *database)
 {
-    if (initializeDatabase(database, table_creation_sql) == 0)
+    int db_exists = initializeDatabase(database, table_creation_sql); // should return 1 else 0
+    if (db_exists)
     {
-        printf("Database already exists: %s\n", database);
-        return;
-    }
-    else if (initializeDatabase(database, table_creation_sql) == -1)
-    {
-        printf("Error initializing database: %s\n", database);
+        printf("%s exists\n", database);
         return;
     }
     else
     {
-        printf("Database created: %s\n", database);
+        printf("Error initializing database: %s\n", database);
+        return;
     }
-   
 }
 
 void populateResponseBody(success_response *response, const char *status_code, const char *status_text, const char *bodyContent)
@@ -104,20 +98,35 @@ int server()
         }
         printf("Connected\n");
 
+        char *records = readRecord("SQL_IN_C.db", "SQL_IN_C", NULL);
         success_response response = {
             .status_code = 200,
             .status_text = "OK",
             .content_type = "application/json",
-            .body = "{\"message\":\"Hello, World!\"}"};
+            .body = records};
 
-        char buffer[BUFFER_SIZE];
-        snprintf(buffer, BUFFER_SIZE,
+        char json[BUFFER_SIZE * 4];
+        if (records)
+        {
+            char *escaped = escape_JSON(records);
+            snprintf(json, sizeof(json), "{\"records\":%s}", records);
+            populateResponseBody(&response, "200", "OK", json);
+            printf("records terminal response: %s\n", json);
+            free(records);
+        }
+        else
+        {
+            populateResponseBody(&response, "200", "OK", "{\"records\":[]}");
+        }
+
+        char buffer[BUFFER_SIZE * 4];
+        snprintf(buffer, sizeof(buffer),
                  "HTTP/1.1 %d %s\r\nContent-Type: %s\r\n\r\n%s",
                  response.status_code, response.status_text, response.content_type, response.body);
 
         send(clientSocket, buffer, strlen(buffer), 0);
+        close(clientSocket);
     }
-    close(clientSocket);
     printf("Disconnected\n");
 
     close(serverSocket);
