@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-// #include <winsock2.h>
-#include <arpa/inet.h>
+#include <winsock2.h> // windows
+// #include <arpa/inet.h> // linux
 #include "sqlite3.h"
 #include <unistd.h>
 #include <string.h>
@@ -53,6 +53,67 @@ void initializeDB(const char *database)
     }
 }
 
+char *getHTTPRequestLine(const char *http_request, char *buffer, size_t buffer_size)
+{
+    const char *line_end = strstr(http_request, "\r\n");
+    if (!line_end)
+    {
+        return NULL;
+    }
+
+    size_t line_length = line_end - http_request;
+    if (line_length >= buffer_size)
+    {
+        return NULL;
+    }
+
+    strncpy(buffer, http_request, line_length);
+    buffer[line_length] = '\0';
+    return buffer;
+}
+
+char *getPostParam(const char *body, const char *param)
+{
+    char *start = strstr(body, param);
+    if (!start)
+        return NULL;
+    start += strlen(param) + 1; // Skip "param="
+    char *end = strchr(start, '&');
+    if (!end)
+        end = start + strlen(start);
+    size_t len = end - start;
+    char *value = malloc(len + 1);
+    if (!value)
+        return NULL;
+    strncpy(value, start, len);
+    value[len] = '\0';
+    return value;
+}
+
+char *runFrontendFunctionCall(const char *function_call, const char *parameters)
+{
+    if (strcmp(function_call, "get_all_records") == 0)
+    {
+        return runSQL("SQL_IN_C.db", "SELECT * FROM SQL_IN_C;");
+    }
+    else if (strcmp(function_call, "add_record") == 0)
+    {
+        char query[BUFFER_SIZE];
+        //                              function=add_record&parameters='jacon', 'manager'
+        snprintf(query, sizeof(query), "INSERT INTO SQL_IN_C (name, job) VALUES (%s);", parameters); // parameters should be formatted as "name', 'job"
+        return runSQL("SQL_IN_C.db", query);
+    }
+    else
+    {
+        return NULL;
+    }
+}
+
+char *RETURN_API_OUTPUT(char *output_query)
+{
+    return runSQL("SQL_IN_C.db", output_query);
+}
+
 int server()
 {
     int serverSocket;
@@ -94,9 +155,6 @@ int server()
     // ===============================================================================================
     // RUN ALL SQL HERE
 
-    runSQL("SQL_IN_C.db", "INSERT OR REPLACE INTO SQL_IN_C (name, job) VALUES ('Alice', 'Engineer');");
-    runSQL("SQL_IN_C.db", "INSERT OR REPLACE INTO SQL_IN_C (name, job) VALUES ('Bob', 'Manager');");
-    runSQL("SQL_IN_C.db", "INSERT OR REPLACE INTO SQL_IN_C (name, job) VALUES ('Charlie', 'Designer');");
     runSQL("SQL_IN_C.db", "select * from SQL_IN_C;");
 
     // ===============================================================================================
@@ -122,28 +180,53 @@ int server()
         buffer[bytesRead] = '\0';
         printf("Received: %s\n", buffer);
 
-        char *sql_result = runSQL("SQL_IN_C.db", "SELECT * FROM SQL_IN_C");
-
-        if (sql_result)
+        char *bodyStart = strstr(buffer, "\r\n\r\n");
+        char *API_OUTPUT = NULL;
+        if (bodyStart)
         {
-            char response[8192];
-            snprintf(response, sizeof(response),
-                     "HTTP/1.1 200 OK\r\n"
-                     "Content-Type: application/json\r\n"
-                     "Content-Length: %zu\r\n"
-                     "Connection: close\r\n"
-                     "\r\n"
-                     "%s",
-                     strlen(sql_result), sql_result);
+            bodyStart += 4; 
+            char *function = getPostParam(bodyStart, "function");
+            char *parameters = getPostParam(bodyStart, "parameters");
 
-            send(clientSocket, response, strlen(response), 0);
-            free(sql_result);
+            if (function && strcmp(function, "add_record") == 0 && parameters)
+            {
+                API_OUTPUT = runFrontendFunctionCall("add_record", parameters);
+            }
+            else if (function && strcmp(function, "get_all_records") == 0)
+            {
+                API_OUTPUT = runFrontendFunctionCall("get_all_records", NULL);
+            }
+            else
+            {
+                API_OUTPUT = RETURN_API_OUTPUT("SELECT * FROM SQL_IN_C");
+            }
+
+            free(function);
+            free(parameters);
+        }
+        else
+        {
+            API_OUTPUT = RETURN_API_OUTPUT("SELECT * FROM SQL_IN_C");
         }
 
-        close(clientSocket);
+        if (!API_OUTPUT)
+        {
+            API_OUTPUT = strdup("{\"status\":\"error\",\"message\":\"Invalid request\"}");
+        }
+
+        char responseBuffer[BUFFER_SIZE * 4];
+        snprintf(responseBuffer, sizeof(responseBuffer), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n%s", API_OUTPUT);
+        send(clientSocket, responseBuffer, strlen(responseBuffer), 0);
+
+        if (API_OUTPUT != NULL)
+        {
+            free(API_OUTPUT);
+        }
+
+        closesocket(clientSocket);
     }
+    closesocket(serverSocket);
     printf("Disconnected\n");
-    close(serverSocket);
 
     return 0;
 }
