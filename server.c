@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <winsock2.h>
+// #include <winsock2.h>
+#include <arpa/inet.h>
 #include "sqlite3.h"
 #include <unistd.h>
 #include <string.h>
@@ -11,6 +12,8 @@
 
 #define PORT 6969        // def port
 #define BUFFER_SIZE 4096 // how many bytes to handle at once (1kb)
+
+char table_creation_sql[BUFFER_SIZE / 4] = "CREATE TABLE IF NOT EXISTS SQL_IN_C ( id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, job TEXT NOT NULL );";
 
 typedef struct success_response
 {
@@ -26,14 +29,21 @@ success_response response = {
     "application/json",
     "{\"message\":\"Empty Success Response\"}"};
 
-char table_creation_sql[BUFFER_SIZE / 4] = "CREATE TABLE IF NOT EXISTS SQL_IN_C ( id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, job TEXT NOT NULL );";
-
-void runSQLQuery(const char *database)
+char *populateResponseBody(success_response *response, const char *status_code, const char *status_text, const char *bodyContent)
 {
-    int db_exists = initializeDatabase(database, table_creation_sql); // should return 1 else 0
+    response->status_code = atoi(status_code); // (A)scii (TO) (I)nt -> ATOI
+    response->status_text = status_text;
+    response->content_type = "application/json";
+    response->body = bodyContent;
+}
+
+void initializeDB(const char *database)
+{
+    bool db_exists = doesDatabaseExist(database, table_creation_sql);
     if (db_exists)
     {
         printf("%s exists\n", database);
+        runSQL(database, table_creation_sql);
         return;
     }
     else
@@ -41,14 +51,6 @@ void runSQLQuery(const char *database)
         printf("Error initializing database: %s\n", database);
         return;
     }
-}
-
-void populateResponseBody(success_response *response, const char *status_code, const char *status_text, const char *bodyContent)
-{
-    response->status_code = atoi(status_code); // (A)scii (TO) (I)nt -> ATOI
-    response->status_text = status_text;
-    response->content_type = "application/json";
-    response->body = bodyContent;
 }
 
 int server()
@@ -59,7 +61,7 @@ int server()
     int client_len = sizeof(client_addr);
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
 
-    runSQLQuery("SQL_IN_C.db"); // create or initialize database
+    initializeDB("SQL_IN_C.db"); // create or initialize database
 
     if (serverSocket == -1)
     {
@@ -88,6 +90,17 @@ int server()
     // if all is successful show listening port
     printf("Listening on port http://localhost:%d !\n", PORT);
     bool isRunning = true;
+
+    // ===============================================================================================
+    // RUN ALL SQL HERE
+
+    runSQL("SQL_IN_C.db", "INSERT OR REPLACE INTO SQL_IN_C (name, job) VALUES ('Alice', 'Engineer');");
+    runSQL("SQL_IN_C.db", "INSERT OR REPLACE INTO SQL_IN_C (name, job) VALUES ('Bob', 'Manager');");
+    runSQL("SQL_IN_C.db", "INSERT OR REPLACE INTO SQL_IN_C (name, job) VALUES ('Charlie', 'Designer');");
+    runSQL("SQL_IN_C.db", "select * from SQL_IN_C;");
+
+    // ===============================================================================================
+    // RUN SERVER LOOP
     while (isRunning)
     {
         clientSocket = accept(serverSocket, (struct sockaddr *)&client_addr, &client_len);
@@ -98,37 +111,39 @@ int server()
         }
         printf("Connected\n");
 
-        char *records = readRecord("SQL_IN_C.db", "SQL_IN_C", NULL);
-        success_response response = {
-            .status_code = 200,
-            .status_text = "OK",
-            .content_type = "application/json",
-            .body = records};
-
-        char json[BUFFER_SIZE * 4];
-        if (records)
+        char buffer[BUFFER_SIZE] = {0};
+        int bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        if (bytesRead < 0)
         {
-            char *escaped = escape_JSON(records);
-            snprintf(json, sizeof(json), "{\"records\":%s}", records);
-            populateResponseBody(&response, "200", "OK", json);
-            printf("records terminal response: %s\n", json);
-            free(records);
+            perror("Receive failed");
+            close(clientSocket);
+            continue;
         }
-        else
+        buffer[bytesRead] = '\0';
+        printf("Received: %s\n", buffer);
+
+        char *sql_result = runSQL("SQL_IN_C.db", "SELECT * FROM SQL_IN_C");
+
+        if (sql_result)
         {
-            populateResponseBody(&response, "200", "OK", "{\"records\":[]}");
+            char response[8192];
+            snprintf(response, sizeof(response),
+                     "HTTP/1.1 200 OK\r\n"
+                     "Content-Type: application/json\r\n"
+                     "Content-Length: %zu\r\n"
+                     "Connection: close\r\n"
+                     "\r\n"
+                     "%s",
+                     strlen(sql_result), sql_result);
+
+            send(clientSocket, response, strlen(response), 0);
+            free(sql_result);
         }
 
-        char buffer[BUFFER_SIZE * 4];
-        snprintf(buffer, sizeof(buffer),
-                 "HTTP/1.1 %d %s\r\nContent-Type: %s\r\n\r\n%s",
-                 response.status_code, response.status_text, response.content_type, response.body);
-
-        send(clientSocket, buffer, strlen(buffer), 0);
         close(clientSocket);
     }
     printf("Disconnected\n");
-
     close(serverSocket);
+
     return 0;
 }
