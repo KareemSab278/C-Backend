@@ -96,7 +96,9 @@ char *runFrontendFunctionCall(const char *function_call, const char *parameters)
     {
         return runSQL("SQL_IN_C.db", "SELECT * FROM SQL_IN_C;");
     }
-    else if (strcmp(function_call, "add_record") == 0)
+
+
+    if (strcmp(function_call, "add_record") == 0)
     {
         char query[BUFFER_SIZE];
         //                              function=add_record&parameters='jacon', 'manager'
@@ -105,7 +107,7 @@ char *runFrontendFunctionCall(const char *function_call, const char *parameters)
     }
     else
     {
-        return NULL;
+        return strdup("{\"status\":\"error\",\"message\":\"Invalid function call\"}");
     }
 }
 
@@ -153,11 +155,6 @@ int server()
     bool isRunning = true;
 
     // ===============================================================================================
-    // RUN ALL SQL HERE
-
-    runSQL("SQL_IN_C.db", "select * from SQL_IN_C;");
-
-    // ===============================================================================================
     // RUN SERVER LOOP
     while (isRunning)
     {
@@ -184,29 +181,29 @@ int server()
         char *API_OUTPUT = NULL;
         if (bodyStart)
         {
-            bodyStart += 4; 
+            bodyStart += 4;
             char *function = getPostParam(bodyStart, "function");
             char *parameters = getPostParam(bodyStart, "parameters");
+
 
             if (function && strcmp(function, "add_record") == 0 && parameters)
             {
                 API_OUTPUT = runFrontendFunctionCall("add_record", parameters);
             }
-            else if (function && strcmp(function, "get_all_records") == 0)
+
+
+            if (function && strcmp(function, "get_all_records") == 0)
             {
                 API_OUTPUT = runFrontendFunctionCall("get_all_records", NULL);
             }
-            else
-            {
-                API_OUTPUT = RETURN_API_OUTPUT("SELECT * FROM SQL_IN_C");
-            }
+
 
             free(function);
             free(parameters);
         }
         else
         {
-            API_OUTPUT = RETURN_API_OUTPUT("SELECT * FROM SQL_IN_C");
+            API_OUTPUT = strdup("{\"status\":\"error\",\"message\":\"Invalid function call\"}");
         }
 
         if (!API_OUTPUT)
