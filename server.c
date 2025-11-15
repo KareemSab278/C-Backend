@@ -11,9 +11,7 @@
 #include "helpers/helpers.h"
 
 #define PORT 6969        // def port
-#define BUFFER_SIZE 4096 // how many bytes to handle at once (1kb)
-
-char table_creation_sql[BUFFER_SIZE / 4] = "CREATE TABLE IF NOT EXISTS SQL_IN_C ( id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, job TEXT NOT NULL );";
+#define BUFFER_SIZE 4096 // how many bytes to handle at once
 
 typedef struct success_response
 {
@@ -35,22 +33,6 @@ char *populateResponseBody(success_response *response, const char *status_code, 
     response->status_text = status_text;
     response->content_type = "application/json";
     response->body = bodyContent;
-}
-
-void initializeDB(const char *database)
-{
-    bool db_exists = doesDatabaseExist(database, table_creation_sql);
-    if (db_exists)
-    {
-        printf("%s exists\n", database);
-        runSQL(database, table_creation_sql);
-        return;
-    }
-    else
-    {
-        printf("Error initializing database: %s\n", database);
-        return;
-    }
 }
 
 char *getHTTPRequestLine(const char *http_request, char *buffer, size_t buffer_size)
@@ -90,30 +72,36 @@ char *getPostParam(const char *body, const char *param)
     return value;
 }
 
+char *RETURN_API_OUTPUT(char *output_query)
+{
+    return runSQL("SQL_IN_C.db", output_query);
+}
+
 char *runFrontendFunctionCall(const char *function_call, const char *parameters)
 {
-    if (strcmp(function_call, "get_all_records") == 0)
+    if (strcmp(function_call, "get_all_records") == 0) // curl -X POST -d "function=get_all_records" http://localhost:6969
     {
         return runSQL("SQL_IN_C.db", "SELECT * FROM SQL_IN_C;");
     }
 
-
-    if (strcmp(function_call, "add_record") == 0)
+    if (strcmp(function_call, "add_record") == 0) // curl -X POST -d "function=add_record&parameters='jacob', 'manager'" http://localhost:6969
     {
         char query[BUFFER_SIZE];
-        //                              function=add_record&parameters='jacon', 'manager'
         snprintf(query, sizeof(query), "INSERT INTO SQL_IN_C (name, job) VALUES (%s);", parameters); // parameters should be formatted as "name', 'job"
         return runSQL("SQL_IN_C.db", query);
     }
+
+    if (strcmp(function_call, "delete_record") == 0) // curl -X POST -d "function=delete_record&parameters=8" http://localhost:6969
+    {
+        char query[BUFFER_SIZE];
+        snprintf(query, sizeof(query), "DELETE FROM SQL_IN_C WHERE id=%s;", parameters);
+        return runSQL("SQL_IN_C.db", query);
+    }
+
     else
     {
         return strdup("{\"status\":\"error\",\"message\":\"Invalid function call\"}");
     }
-}
-
-char *RETURN_API_OUTPUT(char *output_query)
-{
-    return runSQL("SQL_IN_C.db", output_query);
 }
 
 int server()
@@ -176,6 +164,14 @@ int server()
         }
         buffer[bytesRead] = '\0';
         printf("Received: %s\n", buffer);
+        
+        if (strstr(buffer, "OPTIONS") != NULL)
+        { // ai wrote this part because of cors issues
+            char preflightResponse[] = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: content-type\r\n\r\n";
+            send(clientSocket, preflightResponse, strlen(preflightResponse), 0);
+            closesocket(clientSocket);
+            continue;
+        }
 
         char *bodyStart = strstr(buffer, "\r\n\r\n");
         char *API_OUTPUT = NULL;
@@ -185,18 +181,20 @@ int server()
             char *function = getPostParam(bodyStart, "function");
             char *parameters = getPostParam(bodyStart, "parameters");
 
-
             if (function && strcmp(function, "add_record") == 0 && parameters)
             {
                 API_OUTPUT = runFrontendFunctionCall("add_record", parameters);
             }
-
 
             if (function && strcmp(function, "get_all_records") == 0)
             {
                 API_OUTPUT = runFrontendFunctionCall("get_all_records", NULL);
             }
 
+            if (function && strcmp(function, "delete_record") == 0 && parameters)
+            {
+                API_OUTPUT = runFrontendFunctionCall("delete_record", parameters);
+            }
 
             free(function);
             free(parameters);
@@ -212,7 +210,7 @@ int server()
         }
 
         char responseBuffer[BUFFER_SIZE * 4];
-        snprintf(responseBuffer, sizeof(responseBuffer), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n%s", API_OUTPUT);
+        snprintf(responseBuffer, sizeof(responseBuffer), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n\r\n%s", API_OUTPUT);
         send(clientSocket, responseBuffer, strlen(responseBuffer), 0);
 
         if (API_OUTPUT != NULL)

@@ -106,7 +106,6 @@ char *runSQL(const char *database, const char *query) // general purpose.
             snprintf(temp, sizeof(temp), "\"%s\":\"%s\"", colName, escapedValue);
             free(escapedValue);
 
-            // Check if result has space for temp + some buffer
             size_t temp_len = strlen(temp);
             if (strlen(result) + temp_len + 10 > current_size)
             {
@@ -132,4 +131,21 @@ char *runSQL(const char *database, const char *query) // general purpose.
     sqlite3_finalize(stmt);
     sqlite3_close(DB);
     return result;
+}
+
+char table_creation_sql[BUFFER_SIZE / 4] = "CREATE TABLE IF NOT EXISTS SQL_IN_C ( id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL, job TEXT NOT NULL );";
+void initializeDB(const char *database)
+{
+    bool db_exists = doesDatabaseExist(database, table_creation_sql);
+    if (db_exists)
+    {
+        printf("%s exists\n", database);
+        runSQL(database, table_creation_sql);
+        return;
+    }
+    else
+    {
+        printf("Error initializing database: %s\n", database);
+        return;
+    }
 }

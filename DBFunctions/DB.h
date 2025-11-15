@@ -9,4 +9,6 @@ bool doesDatabaseExist(const char *db_name, const char *table_creation_sql);
 //                                 database name        table creation sql
 char *runSQL(const char *database, const char *query);
 //                     database name       sql query
+
+void initializeDB(const char *database);
 #endif
